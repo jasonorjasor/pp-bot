@@ -1,6 +1,14 @@
+import sys
 from collections import Counter
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_PY_DIR = REPO_ROOT / "src" / "py"
+if str(SRC_PY_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_PY_DIR))
 
 from projection_report import (
     build_calibration_artifact,

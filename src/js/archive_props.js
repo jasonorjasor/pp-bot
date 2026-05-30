@@ -1,14 +1,17 @@
 require('dotenv').config();
 const { spawn } = require('child_process');
+const path = require('path');
 
 const PYTHON_BIN = process.env.PYTHON_BIN || 'python';
+const BASE_DIR = path.resolve(__dirname, '..', '..');
+const PYTHON_DIR = path.join(BASE_DIR, 'src', 'py');
 
 function runArchive() {
   return new Promise((resolve, reject) => {
     let output = '';
     let errors = '';
 
-    const py = spawn(PYTHON_BIN, ['archive_props.py'], { cwd: __dirname });
+    const py = spawn(PYTHON_BIN, [path.join(PYTHON_DIR, 'archive_props.py')], { cwd: BASE_DIR });
 
     py.stdout.on('data', (data) => {
       output += data.toString();

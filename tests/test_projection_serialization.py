@@ -6,12 +6,13 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+INDEX_JS_PATH = REPO_ROOT / "src" / "js" / "index.js"
 
 
 class ProjectionSerializationTests(unittest.TestCase):
     def test_build_posted_alert_record_persists_projection_fields(self):
         script = r"""
-const { buildPostedAlertRecord } = require('./index.js');
+const { buildPostedAlertRecord } = require(%s);
 const record = buildPostedAlertRecord({
   propId: '123',
   playerName: 'Test Player',
@@ -70,7 +71,7 @@ const record = buildPostedAlertRecord({
   },
 });
 process.stdout.write(JSON.stringify(record));
-"""
+""" % json.dumps(str(INDEX_JS_PATH))
         result = subprocess.run(
             ["node", "-e", script],
             cwd=REPO_ROOT,

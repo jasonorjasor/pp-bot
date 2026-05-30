@@ -1,9 +1,9 @@
 """
-projection_confrontation_report.py
+src/py/projection_confrontation_report.py
 
 Compare posted-side outcomes against projection-preferred outcomes.
 Usage:
-    python projection_confrontation_report.py [--days N] [--start-date YYYY-MM-DD]
+    python src/py/projection_confrontation_report.py [--days N] [--start-date YYYY-MM-DD]
         [--game-date YYYY-MM-DD] [--include-predeploy]
 """
 

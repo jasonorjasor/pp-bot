@@ -3,7 +3,9 @@ const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const REPORTS_DIR = path.join(__dirname, 'reports');
+const BASE_DIR = path.resolve(__dirname, '..', '..');
+const PYTHON_DIR = path.join(BASE_DIR, 'src', 'py');
+const REPORTS_DIR = path.join(BASE_DIR, 'reports');
 const SUMMARY_FILE = path.join(REPORTS_DIR, 'gradingSummary.json');
 
 function resolvePythonBinary() {
@@ -43,8 +45,8 @@ function runPythonGrader() {
 
     console.error(`[grading] Using python binary: ${pythonBinary}`);
 
-    const py = spawn(pythonBinary, ['grade_props.py'], {
-      cwd: __dirname,
+    const py = spawn(pythonBinary, [path.join(PYTHON_DIR, 'grade_props.py')], {
+      cwd: BASE_DIR,
       stdio: 'inherit',
     });
 

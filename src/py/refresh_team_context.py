@@ -1,5 +1,5 @@
 """
-Refresh the daily team context cache used by nba_stats.py.
+Refresh the daily team context cache used by src/py/nba_stats.py.
 """
 
 import json

@@ -17,7 +17,7 @@ from nba_api.stats.endpoints import SynergyPlayTypes
 
 from prop_utils import CURRENT_SEASON
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_ACTIVE_DIR = BASE_DIR / "data" / "active"
 PLAYTYPE_CACHE_FILE = str(DATA_ACTIVE_DIR / "playTypeCache.json")
 SOURCE_LABEL = "official_nba_synergy_playtypes"

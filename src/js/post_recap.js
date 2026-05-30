@@ -4,9 +4,10 @@ const fs = require('fs');
 const path = require('path');
 
 const GRADING_CHANNEL_ID = process.env.GRADING_CHANNEL_ID || process.env.CHANNEL_ID;
-const DATA_DIR = path.join(__dirname, 'data');
+const BASE_DIR = path.resolve(__dirname, '..', '..');
+const DATA_DIR = path.join(BASE_DIR, 'data');
 const ACTIVE_DATA_DIR = path.join(DATA_DIR, 'active');
-const REPORTS_DIR = path.join(__dirname, 'reports');
+const REPORTS_DIR = path.join(BASE_DIR, 'reports');
 const SUMMARY_FILE = path.join(REPORTS_DIR, 'gradingSummary.json');
 const LAST_RECAP_FILE = path.join(ACTIVE_DATA_DIR, 'lastRecapPosted.json');
 

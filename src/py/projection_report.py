@@ -1,9 +1,9 @@
 """
-projection_report.py
+src/py/projection_report.py
 
 Summarize projection probabilities vs graded outcomes.
 Usage:
-    python projection_report.py [--days N] [--start-date YYYY-MM-DD]
+    python src/py/projection_report.py [--days N] [--start-date YYYY-MM-DD]
         [--game-date YYYY-MM-DD] [--include-predeploy]
 """
 
@@ -15,7 +15,7 @@ import os
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 
-BASE_DIR = os.path.dirname(__file__)
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DATA_ACTIVE_DIR = os.path.join(BASE_DIR, "data", "active")
 REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 

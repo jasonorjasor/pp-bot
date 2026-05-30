@@ -23,7 +23,9 @@ const CONTEXT_ENABLE_PACE = parseBoolean(process.env.CONTEXT_ENABLE_PACE, true);
 const CONTEXT_ENABLE_OPPONENT = parseBoolean(process.env.CONTEXT_ENABLE_OPPONENT, true);
 const CONTEXT_ENABLE_REST = parseBoolean(process.env.CONTEXT_ENABLE_REST, true);
 const CONTEXT_ENABLE_ROLE = parseBoolean(process.env.CONTEXT_ENABLE_ROLE, true);
-const DATA_DIR = path.join(__dirname, 'data');
+const BASE_DIR = path.resolve(__dirname, '..', '..');
+const PYTHON_DIR = path.join(BASE_DIR, 'src', 'py');
+const DATA_DIR = path.join(BASE_DIR, 'data');
 const ACTIVE_DATA_DIR = path.join(DATA_DIR, 'active');
 const SEEN_FILE = path.join(ACTIVE_DATA_DIR, 'seenProps.json');
 const POSTED_ALERTS_FILE = path.join(ACTIVE_DATA_DIR, 'postedProps.jsonl');
@@ -250,8 +252,8 @@ function refreshContextCache() {
     let errors = '';
     let settled = false;
 
-    const py = spawn(PYTHON_BIN, ['refresh_team_context.py'], {
-      cwd: __dirname,
+    const py = spawn(PYTHON_BIN, [path.join(PYTHON_DIR, 'refresh_team_context.py')], {
+      cwd: BASE_DIR,
     });
 
     const timer = setTimeout(() => {
@@ -361,7 +363,7 @@ function callPython(playerName, statType, line, gameHint, startTime) {
     let errors = '';
     let settled = false;
 
-    const args = ['nba_stats.py', playerName, statType, String(line)];
+    const args = [path.join(PYTHON_DIR, 'nba_stats.py'), playerName, statType, String(line)];
     if (gameHint) {
       args.push(String(gameHint));
       if (startTime) {
@@ -369,7 +371,7 @@ function callPython(playerName, statType, line, gameHint, startTime) {
       }
     }
 
-    const py = spawn(PYTHON_BIN, args, { cwd: __dirname });
+    const py = spawn(PYTHON_BIN, args, { cwd: BASE_DIR });
 
     const timer = setTimeout(() => {
       if (settled) {

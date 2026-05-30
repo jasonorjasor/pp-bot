@@ -1,11 +1,11 @@
 """
-nba_stats.py
+src/py/nba_stats.py
 
 Fetches recent NBA player game logs, filters low-minute outliers, and returns
 two-sided prop analytics for both the over and under.
 
 Usage:
-    python nba_stats.py "LeBron James" "Points" 25.5 "DAL" "2026-03-09T19:00:00.000-05:00"
+    python src/py/nba_stats.py "LeBron James" "Points" 25.5 "DAL" "2026-03-09T19:00:00.000-05:00"
 """
 
 import sys
@@ -241,7 +241,7 @@ def compute_analytics(df, stat_type, line, game_hint=None, start_time=None):
     stat_config = STAT_MAP.get(stat_type)
     if not stat_config:
         raise ValueError(
-            f"Unknown stat type: '{stat_type}'. Add it to STAT_MAP in nba_stats.py."
+            f"Unknown stat type: '{stat_type}'. Add it to STAT_MAP in src/py/nba_stats.py."
         )
 
     game_dates = list(df["GAME_DATE_DT"])
@@ -731,7 +731,7 @@ def main():
             json.dumps(
                 {
                     "error": (
-                        "Usage: python nba_stats.py <player_name> <stat_type> <line> "
+                        "Usage: python src/py/nba_stats.py <player_name> <stat_type> <line> "
                         "[opponent_hint] [start_time]"
                     )
                 }

@@ -15,7 +15,7 @@ from nba_api.stats.endpoints import leaguegamelog
 from prop_utils import CURRENT_SEASON
 from playtype_context import compute_playtype_bias
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_ACTIVE_DIR = BASE_DIR / "data" / "active"
 TEAM_CONTEXT_FILE = str(DATA_ACTIVE_DIR / "teamContextCache.json")
 SOURCE_LABEL = "official_nba_leaguegamelog"

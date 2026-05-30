@@ -48,7 +48,12 @@ These are not strictly required, but they can help with fetch reliability if Pri
 
 ## Project layout
 
-The repo keeps source code at the top level for now, while generated state and reports live in separate folders:
+Source code now lives under `src/js/` and `src/py/`, while generated state and reports live in separate folders:
+
+- `src/js/`
+  - Node entrypoints and Discord-facing workflow scripts
+- `src/py/`
+  - Python analytics, grading, projection, and context helpers
 
 - `data/active/`
   - live JSON and JSONL state that the bot reads and writes during normal operation
@@ -116,16 +121,16 @@ npm run projection:confrontation -- --days 30 --post-deploy-only
 ### Checks and tests
 
 - `npm run smoke`
-  - Syntax-checks `index.js`.
+  - Syntax-checks `src/js/index.js`.
 
 - `npm run smoke:grade`
-  - Syntax-checks `grade_props.js`.
+  - Syntax-checks `src/js/grade_props.js`.
 
 - `npm run smoke:recap`
-  - Syntax-checks `post_recap.js`.
+  - Syntax-checks `src/js/post_recap.js`.
 
 - `npm run smoke:archive`
-  - Syntax-checks `archive_props.js`.
+  - Syntax-checks `src/js/archive_props.js`.
 
 - `npm run smoke:projection`
   - Python compile check for projection-related scripts.
@@ -241,7 +246,7 @@ npm run projection:confrontation -- --days 30 --post-deploy-only
 
 ## Current model shape
 
-The live posting logic is still driven by the score-based system in `nba_stats.py`:
+The live posting logic is still driven by the score-based system in `src/py/nba_stats.py`:
 
 - weighted hit rate
 - edge vs line

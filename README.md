@@ -268,8 +268,4 @@ Projection fields are logged and reported, but they do not currently control liv
 - Recaps report both raw alert-level results and deduped unique-line results.
 - Archive scripts keep old settled data out of the active JSONL files.
 
-## Token hygiene
 
-If a Discord token has ever been exposed in source, screenshots, logs, or chat, rotate it in the Discord Developer Portal and replace it in `.env`.
-
-Do not commit `.env`, and do not paste live tokens into source or chat.

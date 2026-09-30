@@ -83,6 +83,25 @@ class PropsSqlTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_invalid_settlement_assessment_rolls_back_import(self):
+        post = {"alertId": "a", "postedAt": "2026-09-01T10:00:00Z", "playerName": "Test Player",
+                "statType": "Points", "line": 20.5, "recommendedSide": "over", "analytics": {}}
+        assessment = {"status": "inferred", "result": "void", "reason": "nba_reboot", "platformVerified": False}
+        for change in ({"status": "confirmed"}, {"result": "bad"}, {"platformVerified": True},
+                       {"status": "needs_review"}, {"reason": ""}):
+            with self.subTest(change=change):
+                self.write_jsonl(self.posted, [post])
+                self.write_jsonl(self.grades, [{"alertId": "a", "gradedAt": "2026-09-02T01:00:00Z",
+                    "result": "loss", "settlement": {**assessment, **change}}])
+                connection = open_database(self.database)
+                try:
+                    with self.assertRaises(ValueError):
+                        import_jsonl(connection, self.posted, self.grades)
+                    self.assertEqual(connection.execute("SELECT COUNT(*) FROM posted_props").fetchone()[0], 0)
+                    self.assertEqual(connection.execute("SELECT COUNT(*) FROM grade_events").fetchone()[0], 0)
+                finally:
+                    connection.close()
+
 
 if __name__ == "__main__":
     unittest.main()

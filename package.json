@@ -23,9 +23,10 @@
     "test:projection": "python -m unittest discover -s tests -p test_projection*.py",
     "test:sql": "python -m unittest discover -s tests -p test_*sql*.py",
     "test:scoring": "python -m unittest discover -s tests -p test_fantasy_scoring.py",
-    "test": "npm run smoke && npm run smoke:grade && npm run smoke:recap && npm run smoke:archive && npm run smoke:projection && npm run smoke:context && npm run smoke:sql && npm run smoke:grading && npm run test:projection && npm run test:sql && npm run test:scoring && npm run test:grading",
+    "test": "npm run smoke && npm run smoke:grade && npm run smoke:recap && npm run smoke:archive && npm run smoke:projection && npm run smoke:context && npm run smoke:sql && npm run smoke:grading && npm run test:projection && npm run test:sql && npm run test:scoring && npm run test:grading && npm run test:participation",
     "test:grading": "python -m unittest discover -s tests -p test_history_grading.py",
-    "smoke:grading": "python -m py_compile src/py/grade_props.py src/py/prop_history.py"
+    "smoke:grading": "python -m py_compile src/py/grade_props.py src/py/prop_history.py src/py/nba_participation.py",
+    "test:participation": "python -m unittest discover -s tests -p test_participation.py"
   },
   "keywords": [],
   "author": "",

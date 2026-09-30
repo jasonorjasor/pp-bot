@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
+from nba_participation import ParticipationProvider, assess_settlement, settlement_summary
 from nba_api.stats.static import teams
 from prop_history import (
     LEAGUE_TIMEZONE, alert_id, aware_datetime, dedupe_observations, finite_number,
@@ -31,7 +32,7 @@ GRADING_SUMMARY_FILE = str(REPORTS_DIR / "gradingSummary.json")
 DEFAULT_LOOKBACK_DAYS = int(os.getenv("GRADE_LOOKBACK_DAYS", "2"))
 DEFAULT_SETTLEMENT_DELAY_HOURS = float(os.getenv("GRADE_SETTLEMENT_DELAY_HOURS", "4"))
 SOURCE_LABEL = "nba_stats_player_game_log"
-GRADING_VERSION = 2
+GRADING_VERSION = 3
 GAME_DATE_TIMEZONE = os.getenv("GRADE_GAME_DATE_TIMEZONE", LEAGUE_TIMEZONE)
 TEAM_ABBREVIATIONS = {team["abbreviation"] for team in teams.get_teams()}
 TEAM_ALIASES = {"PHO": "PHX", "GS": "GSW", "NY": "NYK", "NO": "NOP", "SA": "SAS"}
@@ -459,6 +460,7 @@ def build_report_views(records):
         by_game_date[game_date] = {
             "alertLevel": summarize(alert_records),
             "uniqueLineLevel": summarize(unique_records),
+            "settlementLevel": settlement_summary(unique_records),
             "duplicateAlertsRemoved": len(alert_records) - len(unique_records),
         }
 
@@ -466,6 +468,11 @@ def build_report_views(records):
         "alertLevel": summarize(records),
         "uniqueLineLevel": summarize(unique_line_records),
         "playerGameStatLevel": summarize(dedupe_observations(records, player_game=True)),
+        "settlementLevel": {
+            "alertLevel": settlement_summary(records),
+            "uniqueLineLevel": settlement_summary(unique_line_records),
+            "playerGameStatLevel": settlement_summary(dedupe_observations(records, player_game=True)),
+        },
         "duplicateAlertsRemoved": len(records) - len(unique_line_records),
         "byGameDate": by_game_date,
         "gameDates": game_dates,
@@ -487,7 +494,12 @@ def filter_pending_alerts(posted_records, latest_grades, *, lookback_days=DEFAUL
             continue
         seen.add(alert_id)
         latest = latest_grades.get(alert_id)
-        if not regrade and latest and latest["result"] != "unresolved":
+        assessment = (latest or {}).get("settlement") or {}
+        if not regrade and assessment.get("status") == "inferred" and assessment.get("reason") == "nba_dnp":
+            continue
+        retry_assessment = assessment.get("status") == "needs_review" and assessment.get("reason") in (
+            "participation_data_unavailable", "participation_incomplete", "game_not_final")
+        if not regrade and latest and latest["result"] != "unresolved" and not retry_assessment:
             continue
 
         posted_at = parse_alert_datetime(alert)
@@ -517,7 +529,9 @@ def should_append_record(alert_id, latest_grades, new_record):
         return True
 
     if previous["result"] != "unresolved":
-        return False
+        old = previous.get("settlement") or {}
+        new = new_record.get("settlement") or {}
+        return old.get("status") == "needs_review" and (old != new or participation_signature(previous) != participation_signature(new_record))
 
     if new_record["result"] != "unresolved":
         return True
@@ -526,7 +540,17 @@ def should_append_record(alert_id, latest_grades, new_record):
     new_code = new_record.get("errorCode")
     previous_notes = previous.get("notes")
     new_notes = new_record.get("notes")
-    return not (previous_code == new_code and previous_notes == new_notes)
+    return not (previous_code == new_code and previous_notes == new_notes) or (
+        previous.get("settlement") != new_record.get("settlement") or
+        participation_signature(previous) != participation_signature(new_record))
+
+
+def participation_signature(record):
+    evidence = record.get("participation") or {}
+    fields = ("complete", "source", "reason", "playedFirstHalf", "playedSecondHalf",
+              "playedOvertime", "returnedAfterHalftime", "didNotPlay",
+              "firstHalfMinutes", "secondHalfMinutes", "overtimeMinutes")
+    return tuple(evidence.get(key) for key in fields)
 
 
 def group_alerts(alerts):
@@ -547,6 +571,9 @@ def parse_args():
     parser.add_argument("--dry-run", action="store_true", help="Write proposals and comparison to separate artifacts.")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--game-logs", type=Path, help="Offline NBA rows keyed by player name and season; never falls back to live fetches.")
+    parser.add_argument("--participation-data", type=Path, help="Offline finalized NBA game/roster/rotation fixtures; no participation network fallback.")
+    parser.add_argument("--participation-cache", type=Path, default=DATA_ACTIVE_DIR / "participation")
+    parser.add_argument("--legacy-market-scope", choices=["full_game"], help="Explicitly assess legacy alerts as NBA full-game markets.")
     parser.add_argument("--lookback-days", type=float, default=DEFAULT_LOOKBACK_DAYS)
     parser.add_argument("--settlement-delay-hours", type=float, default=DEFAULT_SETTLEMENT_DELAY_HOURS)
     args = parser.parse_args()
@@ -575,7 +602,42 @@ def cached_player_fetch(cache, player_name, season):
     return {"ok": True, "playerId": entry.get("playerId"), "df": frame, "error": None, "errorCode": None}
 
 
-def run_grading(posted_records, graded_records, args, offline_cache=None):
+def attach_settlement(record, provider, legacy_market_scope=None, fetch_result=None):
+    alert = record.get("alert") or {}
+    if (record.get("nbaGameId") is None and record.get("errorCode") in ("no_game_found", "no_game_rows")
+            and alert.get("nbaGameId") is not None and (fetch_result or {}).get("ok")
+            and fetch_result.get("playerId") is not None):
+        # PlayerGameLog often omits DNPs. A supplied NBA ID still needs date, opponent,
+        # roster membership, and validated zero participation before inferring a DNP.
+        try:
+            identity = normalize_nba_game_id(alert["nbaGameId"])
+            game = provider.get_game(identity)
+            player_id = int(fetch_result["playerId"])
+            roster_player = next(row for row in game.get("players", []) if row["personId"] == player_id)
+            day = scheduled_date(alert, GAME_DATE_TIMEZONE).isoformat()
+            opponent = TEAM_ALIASES.get(str(alert.get("game") or "").upper(), str(alert.get("game") or "").upper())
+            other_teams = {row.get("teamTricode") for row in game.get("players", [])
+                           if row["teamId"] != roster_player["teamId"]}
+            evidence = provider.get(identity, player_id)
+            if game.get("gameDate") == day and opponent in other_teams and evidence.get("didNotPlay") is True:
+                record.update({"nbaGameId": identity, "nbaPlayerId": player_id, "gameDate": day,
+                    "finalMinutes": 0.0, "matchMethod": "verified_roster_dnp"})
+        except (ValueError, KeyError, TypeError, OSError, StopIteration):
+            pass
+    if record.get("nbaGameId") is not None and record.get("nbaPlayerId") is not None:
+        record["participation"] = provider.get(record["nbaGameId"], record["nbaPlayerId"], record.get("finalMinutes"))
+    else:
+        record["participation"] = {"version": 1, "complete": False, "reason": "participation_data_unavailable",
+                                   "details": "Matched NBA game/player identity unavailable"}
+    record["settlement"] = assess_settlement(record, legacy_market_scope)
+    return record
+
+
+def run_grading(posted_records, graded_records, args, offline_cache=None, participation_provider=None):
+    if participation_provider is None:
+        participation_provider = ParticipationProvider(
+            cache_dir=getattr(args, "participation_cache", None),
+            offline_data={} if offline_cache is not None else None, log=log_progress)
     latest_grades = select_latest_grades(graded_records)
     pending_alerts = filter_pending_alerts(
         posted_records, latest_grades, lookback_days=None if args.all_history else args.lookback_days,
@@ -606,15 +668,23 @@ def run_grading(posted_records, graded_records, args, offline_cache=None):
                 f"{fetch_result['errorCode'] or 'unknown'}"
             )
         for alert in alerts:
-            record = grade_alert(alert, fetch_result)
+            record = attach_settlement(grade_alert(alert, fetch_result), participation_provider,
+                                       getattr(args, "legacy_market_scope", None), fetch_result)
             alert_id = record["alertId"]
             proposals.append(record)
             previous = latest_grades.get(alert_id)
             compared_fields = ("result", "finalValue", "finalMinutes", "gameDate")
             changed = previous is not None and any(previous.get(key) != record.get(key) for key in compared_fields)
+            assessment_changed = previous is not None and previous.get("settlement") != record.get("settlement")
             needs_review = previous is not None and previous["result"] != "unresolved" and record["result"] == "unresolved"
+            old_assessment = (previous or {}).get("settlement") or {}
+            if old_assessment.get("status") == "inferred" and record["settlement"]["status"] == "needs_review":
+                needs_review = True
             comparisons.append({
-                "alertId": alert_id, "status": "needs_review" if needs_review else "changed" if changed else "new" if previous is None else "unchanged",
+                "alertId": alert_id, "status": "needs_review" if needs_review else "changed" if changed else "new" if previous is None else "assessment_changed" if assessment_changed else "unchanged",
+                "settlementChanged": assessment_changed,
+                "settlementBefore": previous.get("settlement") if previous else None,
+                "settlementAfter": record.get("settlement"),
                 "before": {key: previous.get(key) for key in compared_fields} if previous else None,
                 "after": {key: record.get(key) for key in compared_fields}, "errorCode": record.get("errorCode"),
             })
@@ -629,6 +699,8 @@ def run_grading(posted_records, graded_records, args, offline_cache=None):
     batch_summary["windowDays"] = None if args.all_history else args.lookback_days
     batch_summary["playerGroupsChecked"] = len(grouped_alerts)
     batch_summary["playerFetches"] = len(fetch_cache)
+    batch_summary["participationGamesChecked"] = len(participation_provider.games)
+    batch_summary["participationGameFetches"] = participation_provider.fetches
 
     overall_summary = build_report_views(list(latest_grades.values()))
     overall_summary["newlyGraded"] = len(new_records)
@@ -661,15 +733,19 @@ def main():
     posted_paths = source_paths(args.posted, archive_root, kind="posted", active_only=args.active_only or not args.all_history)
     posted_records = [record for path in posted_paths for _, record in jsonl_snapshot(path)[0]]
     offline_cache = json.loads(args.game_logs.read_text(encoding="utf-8-sig")) if args.game_logs else None
+    participation_data = json.loads(args.participation_data.read_text(encoding="utf-8-sig")) if args.participation_data else ({} if offline_cache is not None else None)
+    provider = ParticipationProvider(args.participation_cache, participation_data, log=log_progress)
     output_dir = args.output_dir or (REPORTS_DIR / "gradingDryRun" if args.dry_run else None)
     if output_dir is not None:
         targets = [output_dir / name for name in ("proposedGrades.jsonl", "acceptedGrades.jsonl", "gradingSummary.json", "gradingComparison.json")]
         protected = {path.resolve() for path in [*grade_paths, *posted_paths, Path(GRADING_SUMMARY_FILE)]}
         if args.game_logs:
             protected.add(args.game_logs.resolve())
+        if args.participation_data:
+            protected.add(args.participation_data.resolve())
         if any(path.resolve() in protected for path in targets):
             raise ValueError("Separate output must not overwrite source history or the live grading summary")
-    new_records, proposals, summary, comparison = run_grading(posted_records, graded_records, args, offline_cache)
+    new_records, proposals, summary, comparison = run_grading(posted_records, graded_records, args, offline_cache, provider)
     summary["historySources"] = source_metadata
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)

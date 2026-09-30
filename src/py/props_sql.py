@@ -95,6 +95,18 @@ def _insert_grade(connection, record, counts):
         raise ValueError("finalMinutes must be nonnegative")
     if record.get("gameDate") is not None:
         date.fromisoformat(record["gameDate"])
+    assessment = record.get("settlement")
+    if assessment is not None:
+        if not isinstance(assessment, dict) or assessment.get("result") not in RESULTS:
+            raise ValueError("invalid settlement assessment/result")
+        if assessment.get("status") not in ("inferred", "needs_review"):
+            raise ValueError("invalid settlement assessment status")
+        if assessment.get("platformVerified") is not False:
+            raise ValueError("inferred settlement must explicitly remain platform unverified")
+        if assessment["status"] == "needs_review" and assessment["result"] != "unresolved":
+            raise ValueError("unreviewed settlement must be unresolved")
+        if not isinstance(assessment.get("reason"), str) or not assessment["reason"].strip():
+            raise ValueError("settlement reason is required")
     nested = record.get("alert")
     if nested is not None:
         if not isinstance(nested, dict):

@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 from prop_history import dedupe_observations
+from nba_participation import settlement_summary
 from collections import Counter, defaultdict
 
 from projection_report import (
@@ -448,9 +449,12 @@ def main():
             "includeLegacyFantasy": args.include_legacy_fantasy, "days": args.days,
             "startDate": args.start_date, "gameDate": args.game_date,
             "postDeployCutoff": deploy_cutoff.isoformat() if deploy_cutoff else None,
-            "legacyGradingAlerts": sum(row.get("gradingVersion") != 2 for row in selected)},
+            "legacyGradingAlerts": sum((row.get("gradingVersion") or 0) < 2 for row in selected)},
             "filters": dict(filter_counts), "latestAlert": prop_level,
-            "uniqueLine": unique, "playerGameStat": deduped})
+            "uniqueLine": unique, "playerGameStat": deduped,
+            "inferredSettlement": {"latestAlert": settlement_summary(selected),
+                "uniqueLine": settlement_summary(dedupe_observations(selected)),
+                "playerGameStat": settlement_summary(dedupe_player_game(selected))}})
 
 
 if __name__ == "__main__":

@@ -792,6 +792,8 @@ function buildAlertId(propId, postedAt, line, recommendedSide) {
 
 function buildPostedAlertRecord({ propId, playerName, attr, lineChangeText, decision, analytics }) {
   const postedAt = new Date().toISOString();
+  const duration = String(attr.duration || 'full_game').toLowerCase();
+  const marketScope = ['full_game', 'full', 'game'].includes(duration) ? 'full_game' : 'unknown';
   return {
     alertId: buildAlertId(propId, postedAt, attr.line_score, decision.recommendation),
     postedAt,
@@ -805,6 +807,9 @@ function buildPostedAlertRecord({ propId, playerName, attr, lineChangeText, deci
     score: decision.score,
     game: attr.description || null,
     startTime: attr.start_time || null,
+    league: 'NBA',
+    marketScope,
+    marketScopeSource: 'nba_league_7_feed',
     analytics: {
       fantasyScoringVersion: analytics.fantasyScoringVersion,
       sampleSize: analytics.sampleSize,

@@ -1,6 +1,6 @@
 # PP BOT repair plan
 
-Updated September 30, 2026. Work in the existing PP BOT checkout and preserve the uncommitted SQL addition.
+Updated September 30, 2026. Work in the existing PP BOT checkout and preserve source history.
 
 The audit findings are in `reports/offseason_review_2026-09-30.md`. Relevant project history confirms that projections deliberately remain research-only and all families remain `watch_only`. Repairing a shared stat formula can change a score because its input was wrong; promoting projections or redesigning score weights is a separate, later decision.
 
@@ -26,6 +26,8 @@ Prefer stable game IDs where available, require the expected opponent, and prior
 Acceptance: fixtures cover back-to-backs, UTC midnight, repeated opponents, wrong-opponent candidates, reschedules, missing games, and ambiguous matches. A grading dry run writes to a separate location and shows which outcomes would change.
 
 Implemented strict NBA-ID or league-date/opponent matching, grading version/provenance, unresolved zero/missing participation, and removal of the five-minute void heuristic. Added separate dry-run/regrade outputs and an offline cached-log input. Comparison flags unsupported settled-to-unresolved changes for review; accepted corrections are separate. Existing real grades remain intact for step 7.
+
+Participation follow-up: grading version 3 validates full-game NBA rotations against box-score minutes and complete court coverage, detects second-half/overtime returns, and stores a separate rule-inferred settlement assessment. Incomplete data stays for review; historical market scope requires explicit assumptions. Proven DNP fallback needs exact game/date/opponent/roster evidence. Recaps/reports/SQL retain the distinction from raw results. This extends stage 2 without starting the remaining stages.
 
 ## 3. Reporting and complete SQL history — complete
 
@@ -71,3 +73,6 @@ Acceptance: correction counts reconcile with originals, evaluation uses only inf
 - All eight source JSONL hashes remain unchanged. Offline grading fixtures showed a supported loss-to-win correction and an unsupported downgrade requiring review. Real historical reconciliation is pending step 7. No live Discord workflow was started.
 - The default analytics database was refreshed from all sources after preserving its previous active-only copy. Separate reports, databases, test logs, and verification evidence are under `reports/step23/`. Next stage: alert delivery and safe archiving.
 - Revision handoff: this code revision captures completed stages 1–3, their regression tests, README, and decision log. Runtime history, analytics databases, generated reports, and credentials stay outside version control. Stages 4–7 remain separate work; completing them is not required to publish these tested fixes.
+- Participation follow-up verified: all syntax/compile checks and 107 tests pass (13 projection, 16 SQL, 10 scoring, 28 grading/history, 40 participation). The final participation checks also cover positive game-log minutes conflicting with a zero-minute box score.
+- A bounded live NBA request for game `0022000180` returned a finalized date, 24 roster players, and 56 rotation rows. Jaylen Brown's 15.55 first-half and 9.4667 second-half minutes reconciled with 25:01 full-game minutes. This validates parsing/participation, not historical platform settlement.
+- An isolated four-alert offline demo preserved raw results while distinguishing a reboot, LESS win, second-half return, and DNP. Grading summaries, projection/confrontation artifacts, and SQL agreed. Reimport inserted no additional events; fixture database integrity/foreign keys passed. All eight real JSONL hashes remain unchanged, and the real database still reports 41,316 legacy unassessed outcomes. Evidence is under `reports/participation_followup/`; no live Discord messages or historical relabeling occurred.

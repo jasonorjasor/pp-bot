@@ -224,6 +224,21 @@ function buildRecapEmbed(summary) {
     });
   }
 
+  const slateSettlement = slateView.settlementLevel;
+  const settlement = slateSettlement?.uniqueLineLevel || slateSettlement || batch.settlementLevel?.uniqueLineLevel;
+  if (settlement) {
+    embed.addFields({
+      name: 'Inferred settlement assessment',
+      value: [
+        `Reboots: **${settlement.reasons?.nba_reboot || 0}** | DNPs: **${settlement.reasons?.nba_dnp || 0}**`,
+        `Inferred record: **${settlement.win}-${settlement.loss}-${settlement.push}** | Voids: **${settlement.void}**`,
+        `Needs review: **${settlement.statuses?.needs_review || 0}** | Legacy unassessed: **${settlement.statuses?.legacy_unassessed || 0}**`,
+        'NBA evidence and published rules; platform settlement remains unverified.',
+      ].join('\n'),
+      inline: false,
+    });
+  }
+
   return embed;
 }
 
@@ -272,7 +287,11 @@ async function main() {
   console.log(`[recap] Posted recap for slate ${getPrimarySlateDate(summary) || 'unknown'}.`);
 }
 
-main().catch((error) => {
-  console.error('[recap] Failed:', error.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error('[recap] Failed:', error.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { buildRecapEmbed, computeRecapHash };

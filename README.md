@@ -88,7 +88,8 @@ Main active files:
   - Grades pending props only.
   - Updates `data/active/gradedProps.jsonl` and `reports/gradingSummary.json`.
   - Uses a supplied NBA game ID, or the exact scheduled league date plus expected opponent. Timezone defaults to `America/New_York`; there is no nearby-game fallback. Ambiguous/missing evidence stays unresolved.
-  - Records `gradingVersion: 2`, matching provenance, and `platformSettlementVerified: false`. Results compare NBA box scores with the posted line. They do not certify PrizePicks settlement, injury reboots, or payouts. Positive participation is evaluated even below five minutes; zero/missing participation stays unresolved.
+  - Records `gradingVersion: 3`, matching provenance, and `platformSettlementVerified: false`. `result` compares NBA box scores with the posted line. Positive participation is evaluated even below five minutes; zero/missing participation stays unresolved in that comparison.
+  - Adds NBA participation evidence and a separate inferred settlement assessment, described below. NBA rotation data can establish absence after halftime; missing play-by-play events cannot.
 
 - `npm run recap`
   - Posts the latest recap from `reports/gradingSummary.json`.
@@ -139,6 +140,20 @@ This can fetch NBA game logs for the entire posted history. It writes separate `
 
 For deterministic offline review, add `--game-logs PATH`. The JSON shape is `{"players":{"Player Name|2025-26":{"playerId":123,"games":[{"GAME_ID":"0022500001","GAME_DATE":"2026-03-11","MATCHUP":"LAL vs. DAL","MIN":30,"PTS":25}]}}}`. Supply all stat columns needed for each prop (including `TOV` for fantasy). Missing cached player/season entries stay unresolved and never trigger live fetches. Use `--posted PATH --grades PATH` for isolated fixtures.
 
+### NBA participation and inferred reboots
+
+Ordinary grading checks finalized NBA GameRotation stints against the full box-score roster/minutes and five-player coverage throughout the game. It calculates first-half, second-half, and overtime minutes. If rotations are unavailable or incomplete, recognized on-court play-by-play events can prove that a player returned; absence of events stays unknown. Results are shared across players in the same game and cached under `data/active/participation/`. Valid rotations refresh after 24 hours; partial finalized data refreshes after 15 minutes. Failed/nonfinal responses are cached only within the current run. NBA requests have bounded retries, and evidence retains source timestamps and hashes.
+
+`participation` contains these checks. `settlement` contains `status`, `result`, `reason`, `policyVersion`, and `platformVerified: false`. For a supported single-player NBA full-game MORE market, a losing box-score comparison plus validated first-half participation and no later return yields an inferred `void` with reason `nba_reboot`. Returning in quarters 3/4 or overtime prevents that inference. Winning MORE and LESS results remain their box-score outcomes; ties remain `push`. Complete evidence of zero participation can produce an inferred DNP. This follows the [published NBA reboot guidance](https://www.prizepicks.com/reboots), recorded as a September 30, 2026 policy snapshot; it does not verify a PrizePicks lineup, discretionary board correction, injury reason, or payout.
+
+New alerts save NBA full-game feed provenance. Partial-game durations and unsupported stat markets stay for review. Old alerts without market scope are unassessed unless a separate historical review explicitly supplies `--legacy-market-scope full_game`. That override is an assumption about legacy market eligibility, not evidence that the platform settled it that way. Missing participation data leaves the assessment `needs_review` and can be retried within the normal grading window. A supported DNP stops ordinary retries. Explicit regrading that loses a supported assessment is flagged for review and excluded from accepted output.
+
+A missing PlayerGameLog row alone never means DNP. If the alert supplies an NBA game ID, the fallback additionally verifies the scheduled league date, opponent, roster membership, and complete zero participation. Without that identity/evidence, the case remains unresolved. Existing history is not automatically rewritten; historical assessment remains a separate review.
+
+For fully offline grading, supply normalized participation data with `--participation-data PATH` alongside `--game-logs PATH`. Its shape is `{"games":{"0022500001":{"gameId":"0022500001","gameStatus":3,"period":4,"players":[{"personId":123,"teamId":1,"minutesSeconds":600}],"rotationRows":[{"GAME_ID":"0022500001","PERSON_ID":123,"TEAM_ID":1,"IN_TIME_REAL":0,"OUT_TIME_REAL":6000}],"actions":[]}}}`. Times in rotation rows are elapsed tenths of a second; a usable fixture must contain both full rosters and complete court coverage, not just the example player. DNP fallback also needs `gameDate` and player `teamTricode`. See `tests/test_participation.py` for complete fixtures. Missing supplied games never trigger network requests; supplying game logs without participation data also disables participation network requests. `--participation-cache PATH` changes the live cache location.
+
+The grading summary, recap, projection reports, and SQL query expose inferred settlements separately from raw box-score metrics. Projection fitting still uses its documented box-score labels; inferred reboots do not silently change calibration inputs.
+
 ### Optional SQL analytics
 
 The bot continues to treat JSONL files as the source of truth. To create or refresh a local SQLite analytics copy and print import metadata and integrity counts, run:
@@ -161,6 +176,8 @@ npm run analytics:sql -- --posted fixtures/posted.jsonl --grades fixtures/graded
 ```
 
 Rebuild imports and checks a temporary database beside the destination, then replaces the destination atomically. Failure preserves the previous database. Close external database readers before rebuilding on Windows. SQL remains an optional analytics copy; its historical labels are not certified settlement or profitability estimates.
+
+SQL refresh is manual: rerun `npm run analytics:sql` after grading or collecting more alerts. The existing schema stores the complete grading JSON, including participation and settlement evidence. `sql/settlement_summary.sql` counts inferred outcomes and marks old grades as `legacy_unassessed`; it does not replace their box-score results. See [docs/SQL_GUIDE.md](docs/SQL_GUIDE.md) for a plain-language explanation, table/view descriptions, and example queries.
 
 ### Checks and tests
 
@@ -193,6 +210,9 @@ Rebuild imports and checks a temporary database beside the destination, then rep
 
 - `npm run test:grading`
   - Tests event identity, participation, report populations, and the Node-to-Python offline grading CLI.
+
+- `npm run test:participation`
+  - Tests validated court coverage, halftime/overtime, DNP identity, incomplete feeds, retries/cache, separate assessments, recap rendering, and offline grading-to-SQL import.
 
 - `npm test`
   - Runs the full local check suite.

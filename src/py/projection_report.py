@@ -15,6 +15,7 @@ import os
 import math
 from pathlib import Path
 from prop_history import aware_datetime, dedupe_observations, load_grade_history, source_paths
+from nba_participation import settlement_summary
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 
@@ -906,9 +907,12 @@ def main():
     artifact["metadata"].update(history_metadata)
     artifact["metadata"].update({"includeLegacyFantasy": args.include_legacy_fantasy,
         "settlementBasis": "historical/internal box-score evaluations; platform settlement unverified",
-        "legacyGradingAlerts": sum(record.get("gradingVersion") != 2 for record in selected),
+        "legacyGradingAlerts": sum((record.get("gradingVersion") or 0) < 2 for record in selected),
         "probabilitySemantics": "existing estimator; void/push probability redesign pending step 5"})
     artifact["populationSummaries"] = {"latestAlert": prop_level, "uniqueLine": unique_lines, "playerGameStat": deduped}
+    artifact["inferredSettlement"] = {"latestAlert": settlement_summary(selected),
+        "uniqueLine": settlement_summary(dedupe_observations(selected)),
+        "playerGameStat": settlement_summary(representatives)}
     write_calibration_artifact(args.output_artifact, artifact)
     print(f"Calibration artifact written to {args.output_artifact}")
 

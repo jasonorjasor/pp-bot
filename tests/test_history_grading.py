@@ -53,7 +53,7 @@ class GradingIdentityTests(unittest.TestCase):
         self.assertEqual((result["gameDate"], result["finalValue"], result["result"]), ("2026-03-11", 25, "win"))
         self.assertEqual(result["nbaGameId"], "0022500001")
         self.assertEqual(result["nbaPlayerId"], 123)
-        self.assertEqual(result["gradingVersion"], 2)
+        self.assertEqual(result["gradingVersion"], 3)
         self.assertFalse(result["platformSettlementVerified"])
 
     def test_no_previous_day_wrong_opponent_fallback(self):

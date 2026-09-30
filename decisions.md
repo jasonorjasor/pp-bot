@@ -71,7 +71,29 @@ Recorded September 30, 2026. Scope: repair-plan steps 2 and 3. Entries document 
 
 No original JSONL file is scheduled for mutation during verification. Live posting and model score-weight changes are outside this request.
 
+## Participation follow-up decisions
+
+### D08 — Validate court intervals; never infer absence from missing events
+
+Use NBA GameRotation stints, validated against full box-score minutes and five-player team coverage for the entire finalized game. Check quarters 3/4 and overtime. NBA play-by-play is a fallback for positive on-court evidence only; missing events, bench technicals, and absent player rows do not establish non-participation. Quarter-filtered traditional box scores are excluded: a live request for one quarter returned a player with 25:01 minutes. Rotation availability is intermittent, so unsuccessful requests are retried and incomplete evidence remains unknown.
+
+Cache finalized per-game data once for all alerts, with a 24-hour refresh for valid rotations and a 15-minute refresh for partial evidence. Retain source timestamps/hashes and allow supplied offline fixtures without live fallback. Validation costs an extra full-game box score but prevents a silently truncated rotation feed from creating false reboots. A missing game-log row alone cannot prove a DNP. An alert with a supplied NBA game ID can use the full-roster fallback only after verifying date, opponent, membership, and zero participation; otherwise it remains unresolved.
+
+### D09 — Store inferred settlement separately from box-score results
+
+Retain `result` as the original NBA box-score comparison. Add `participation` evidence and a versioned `settlement` assessment. Infer a reboot only for an explicit single-player NBA full-game MORE market, first-half participation, validated absence after halftime and in overtime, and a losing MORE comparison. Winning MORE, LESS, partial-game markets, and later returns are evaluated separately. A tie remains a push for the existing analytics convention; it is not automatically converted to a reboot. Verified zero participation can produce an inferred DNP. These are rule-based inferences using the [published NBA reboot guidance](https://www.prizepicks.com/reboots), not platform-confirmed settlements.
+
+New alerts persist full-game NBA feed provenance. Legacy alerts lacking market scope require an explicit research override; ambiguous eligibility stays for review. Separate summary/recap counts expose inferred settlements without relabeling box-score history or automatically fitting projections on inferred platform labels. Cases with unavailable participation data can be retried during the grading window even when a box-score result already exists.
+
+Only stat types supported by the full-game grader and valid MORE/LESS sides are assessed, excluding unknown attempt-based markets. Complete DNP assessments stop routine retries; explicit regrading that loses previously supported evidence requires review. These choices reduce unnecessary API requests and prevent an outage from erasing an evidence-backed assessment. Rotations establish court participation, not the reason a player left, and this feature has no platform lineup settlement feed.
+
+### D10 — Reuse SQL raw snapshots for new evidence
+
+Schema 2 already retains the complete grading JSON, so participation/settlement fields import without new nullable columns or a migration. Add a descriptive settlement query using SQLite JSON functions and validate assessment enums on import. The existing latest-event chronology still selects each alert's newest evidence, and original JSONL stays authoritative. This keeps the optional database reproducible and avoids making the bot depend on SQL for live grading.
+
 ## Implementation outcomes
+
+### Earlier stages 1–3
 
 - Steps 2 and 3 implemented locally. Report sampling and SQL views share the same keys and ordering. The Node grading wrapper forwards review arguments and reads the separate summary. Recap text identifies box-score evaluation without claiming verified platform settlement.
 - **Legacy identity choice:** 999 posted records predate saved IDs. Keeping the original ID formula imported them without losing their links to grade events. Full import: 41,573 posted alerts, 42,468 events, 41,316 latest outcomes. These counts include archived files.
@@ -82,3 +104,11 @@ No original JSONL file is scheduled for mutation during verification. Live posti
 - **Grading review:** offline CLI fixtures demonstrate a loss-to-win correction and a settled-to-unresolved `needs_review` case. Only the supported correction enters `acceptedGrades.jsonl`. Cached-input mode makes no live NBA fetches. No real historical grades were rewritten and no Discord messages were sent.
 - **Research interpretation:** the full-history player-game/stat confrontation sample has 15,550 complete non-tied pairs: posted sides win 54.8%, projection-preferred sides 52.8%. These use legacy box-score labels, exclude legacy fantasy predictions, and do not establish profitability or independent sample size. They support retaining research-only projections; model promotion/weight changes were not made.
 - **Checks:** all syntax/compile checks and 65 regression tests pass. Separate artifacts and reconciliation evidence are under ignored `reports/step23/`. Comprehensive authoritative historical regrading remains step 7; probability estimator/season/context repairs remain step 5.
+
+### Participation follow-up
+
+- **Checks:** all syntax/compile checks and 107 tests pass, including 40 participation tests. Coverage includes one-second returns, halftime boundaries, overtime, truncated/conflicting feeds, missing identities, bench events, retries/cache, DNP fallback, prior-assessment protection, recap rendering, SQL validation rollback, and offline Node-to-Python grading/import.
+- **Live verification:** NBA game `0022000180` returned 24 roster players and 56 rotation rows, with date `2021-01-15`. Jaylen Brown's first-half 15.55 and second-half 9.4667 minutes matched 25:01 overall; second-half participation is established. No PrizePicks settlement was queried or claimed.
+- **Offline integration:** four isolated alerts retained raw loss/win/loss/unresolved results while producing inferred reboot/win/loss/DNP assessments. Grading, projection, confrontation, and SQL summaries agreed. The fixture SQL import was idempotent with integrity `ok` and zero foreign-key violations.
+- **Preservation:** all eight active/archive JSONL hashes remain unchanged. The real SQLite database retains 41,573 posted alerts, 42,468 events, and 41,316 latest outcomes, all currently `legacy_unassessed` for the new settlement field. No synthetic fixture data was mixed into the real database. No live Discord messages were sent.
+- **Limits:** historical market eligibility and policy dates need review before any correction dataset is adopted. NBA rotations can be unavailable or incomplete; those cases remain unknown. Full-roster DNP fallback requires a supplied NBA game ID; date/opponent-only alerts missing from PlayerGameLog remain unresolved. Season/context and projection probability repairs remain stage 5. Evidence and demonstrations are in ignored `reports/participation_followup/`.

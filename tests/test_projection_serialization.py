@@ -10,6 +10,18 @@ INDEX_JS_PATH = REPO_ROOT / "src" / "js" / "index.js"
 
 
 class ProjectionSerializationTests(unittest.TestCase):
+    def test_partial_duration_is_not_saved_as_full_game(self):
+        script = r"""
+const { buildPostedAlertRecord } = require(%s);
+const record = buildPostedAlertRecord({propId:'half',playerName:'Test Player',
+  attr:{duration:'first_half',line_score:10.5,stat_type:'Points',description:'DAL',start_time:'2026-04-01T00:00:00Z'},
+  lineChangeText:'New',decision:{recommendation:'over',tier:'watchlist',score:7},analytics:{}});
+process.stdout.write(JSON.stringify(record));
+""" % json.dumps(str(INDEX_JS_PATH))
+        result = subprocess.run(["node", "-e", script], cwd=REPO_ROOT,
+            capture_output=True, text=True, encoding="utf-8", check=True)
+        self.assertEqual(json.loads(result.stdout.splitlines()[-1])["marketScope"], "unknown")
+
     def test_build_posted_alert_record_persists_projection_fields(self):
         script = r"""
 const { buildPostedAlertRecord } = require(%s);
@@ -91,6 +103,9 @@ process.stdout.write(JSON.stringify(record));
         self.assertTrue(analytics["projectionLowConfidence"])
         self.assertEqual(analytics["projectionConfidenceReasons"], ["small_sample"])
         self.assertEqual(payload["recommendedSide"], "over")
+        self.assertEqual(payload["league"], "NBA")
+        self.assertEqual(payload["marketScope"], "full_game")
+        self.assertEqual(payload["marketScopeSource"], "nba_league_7_feed")
 
 
 if __name__ == "__main__":

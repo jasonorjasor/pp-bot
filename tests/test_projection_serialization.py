@@ -25,6 +25,7 @@ const record = buildPostedAlertRecord({
   lineChangeText: 'New',
   decision: { recommendation: 'over', tier: 'best_bet', score: 8.1 },
   analytics: {
+    fantasyScoringVersion: 2,
     sampleSize: 10,
     hitSampleSize: 10,
     mean: 12,
@@ -83,6 +84,7 @@ process.stdout.write(JSON.stringify(record));
         payload_line = [line for line in result.stdout.splitlines() if line.strip()][-1]
         payload = json.loads(payload_line)
         analytics = payload["analytics"]
+        self.assertEqual(analytics["fantasyScoringVersion"], 2)
 
         self.assertEqual(analytics["projectionConfidenceBand"], "medium")
         self.assertEqual(analytics["projectionFamilyStatus"], "watch_only")

@@ -12,6 +12,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import math
+from pathlib import Path
+from prop_history import aware_datetime, dedupe_observations, load_grade_history, source_paths
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 
@@ -46,6 +49,7 @@ PROJECTION_FAMILY_POLICY = {
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    add_history_args(parser)
     parser.add_argument("--days", type=int, default=7, help="Rolling lookback window based on gradedAt.")
     parser.add_argument("--start-date", type=str, help="Inclusive gradedAt cutoff in YYYY-MM-DD format.")
     parser.add_argument("--game-date", type=str, help="Exact slate date (gameDate) to analyze.")
@@ -83,7 +87,39 @@ def parse_args():
         default=CALIBRATION_ARTIFACT_FILE,
         help="Path to write the calibration artifact JSON.",
     )
-    return parser.parse_args()
+    return validate_report_args(parser, parser.parse_args())
+
+
+def add_history_args(parser):
+    parser.add_argument("--grades", type=Path, default=Path(GRADED_PROPS_FILE))
+    parser.add_argument("--archive-root", type=Path)
+    parser.add_argument("--active-only", action="store_true")
+    parser.add_argument("--all-history", action="store_true", help="Disable the rolling time cutoff; source defaults include archives.")
+    parser.add_argument("--include-legacy-fantasy", action="store_true", help="Include predictions/labels from the old formula in research metrics.")
+
+
+def validate_report_args(parser, args):
+    if args.all_history:
+        args.days = None
+    if args.days is not None and args.days < 0:
+        parser.error("--days must be nonnegative")
+    for field in ("start_date", "game_date"):
+        if getattr(args, field) and parse_date(getattr(args, field)) is None:
+            parser.error(f"--{field.replace('_', '-')} requires YYYY-MM-DD")
+    if args.include_predeploy and args.post_deploy_only:
+        parser.error("predeploy filter options conflict")
+    for field in ("min_count", "calibration_min_side_count", "calibration_min_family_count"):
+        if hasattr(args, field) and getattr(args, field) < 1:
+            parser.error("minimum counts must be positive")
+    return args
+
+
+def read_report_history(args):
+    root = args.archive_root
+    default_archive = Path(BASE_DIR) / "archive"
+    if root is None and args.grades.resolve() == Path(GRADED_PROPS_FILE).resolve() and default_archive.is_dir():
+        root = default_archive
+    return load_grade_history(source_paths(args.grades, root, active_only=args.active_only))
 
 
 def load_jsonl(path):
@@ -103,7 +139,7 @@ def parse_dt(raw):
     if not raw:
         return None
     try:
-        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        return aware_datetime(raw)
     except ValueError:
         return None
 
@@ -152,7 +188,8 @@ def safe_float(value):
     if value is None:
         return None
     try:
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) and not isinstance(value, bool) else None
     except (TypeError, ValueError):
         return None
 
@@ -161,10 +198,11 @@ def get_probability_for_side(analytics, side):
     if side not in ("over", "under"):
         return None
     side_key = "Over" if side == "over" else "Under"
-    prob = safe_float(analytics.get(f"p{side_key}Adjusted"))
-    if prob is None:
-        prob = safe_float(analytics.get(f"p{side_key}Full"))
-    return prob
+    raw = analytics.get(f"p{side_key}Adjusted")
+    if raw is None:
+        raw = analytics.get(f"p{side_key}Full")
+    prob = safe_float(raw)
+    return prob if prob is not None and 0 <= prob <= 1 else None
 
 
 def choose_probability(alert):
@@ -179,12 +217,8 @@ def get_projection_side(analytics):
     over_prob = get_probability_for_side(analytics, "over")
     under_prob = get_probability_for_side(analytics, "under")
 
-    if over_prob is None and under_prob is None:
+    if over_prob is None or under_prob is None:
         return None
-    if over_prob is None:
-        return "under"
-    if under_prob is None:
-        return "over"
     if abs(over_prob - under_prob) < 1e-12:
         return "tie"
     return "over" if over_prob > under_prob else "under"
@@ -248,6 +282,10 @@ def make_summary():
         "void": 0,
         "unresolved": 0,
         "countable": 0,
+        "eligibleWins": 0,
+        "eligibleLosses": 0,
+        "legacyFantasyExcluded": 0,
+        "rawWinRate": 0.0,
         "winRate": 0.0,
         "brier": 0.0,
         "recordsWithProjection": 0,
@@ -282,8 +320,8 @@ def derive_confidence_band(alert):
         return stored_band
 
     method = str(analytics.get("projectionMethod") or "").lower()
-    sample_full = int(analytics.get("projectionSampleSizeFull") or 0)
-    sample_limited = int(analytics.get("projectionSampleSizeLimited") or 0)
+    sample_full = safe_float(analytics.get("projectionSampleSizeFull")) or 0
+    sample_limited = safe_float(analytics.get("projectionSampleSizeLimited")) or 0
     stored_low_conf = bool(analytics.get("projectionLowConfidence"))
 
     if stored_low_conf:
@@ -373,30 +411,23 @@ def select_records(records, args, deploy_cutoff):
 
 
 def dedupe_player_game(records):
-    grouped = {}
-    for record in records:
-        alert = record.get("alert") or {}
-        prop_id = alert.get("propId") or record.get("propId") or alert.get("alertId") or record.get("alertId")
-        if prop_id:
-            key = ("propId", str(prop_id))
-        else:
-            stat_type = alert.get("statType") or "unknown"
-            side = get_posted_side(alert) or "unknown"
-            player = alert.get("playerName") or "unknown"
-            game_key = alert.get("startTime") or record.get("gameDate")
-            if not game_key:
-                graded_at = parse_dt(record.get("gradedAt"))
-                game_key = graded_at.date().isoformat() if graded_at else "unknown"
-            key = (player, stat_type, side, str(game_key))
-        current = grouped.get(key)
-        current_dt = parse_dt(current.get("gradedAt")) if current else None
-        record_dt = parse_dt(record.get("gradedAt"))
-        if current is None or (record_dt and (current_dt is None or record_dt > current_dt)):
-            grouped[key] = record
-    return list(grouped.values())
+    return dedupe_observations(records, player_game=True)
 
 
-def summarize_records(records):
+def is_legacy_fantasy(record):
+    alert = record.get("alert") or {}
+    return alert.get("statType") in ("Fantasy Score", "Fantasy Points") and (
+        record.get("fantasyScoringVersion") != 2 or (alert.get("analytics") or {}).get("fantasyScoringVersion") != 2
+    )
+
+
+def stable_representatives(records):
+    return [record for record in records if has_projection(record.get("alert") or {})
+            and has_confidence(record.get("alert") or {})
+            and derive_confidence_band(record.get("alert") or {}) == "stable"]
+
+
+def summarize_records(records, include_legacy_fantasy=False):
     summary = make_summary()
 
     for record in records:
@@ -432,6 +463,10 @@ def summarize_records(records):
         if result not in ("win", "loss"):
             continue
 
+        if is_legacy_fantasy(record) and not include_legacy_fantasy:
+            summary["legacyFantasyExcluded"] += 1
+            continue
+
         if not has_projection_fields:
             continue
         if not has_confidence_fields:
@@ -443,6 +478,8 @@ def summarize_records(records):
 
         outcome = 1 if result == "win" else 0
         summary["countable"] += 1
+        summary["eligibleWins"] += outcome
+        summary["eligibleLosses"] += 1 - outcome
         summary["brier"] += (prob - outcome) ** 2
 
         update_bucket(summary["byBucket"][bucket_label(prob)], prob, outcome)
@@ -479,7 +516,7 @@ def summarize_records(records):
             summary["confidenceReasonCounts"][str(reason)] += 1
 
     if summary["countable"] > 0:
-        summary["winRate"] = round((summary["win"] / summary["countable"]) * 100, 1)
+        summary["winRate"] = round((summary["eligibleWins"] / summary["countable"]) * 100, 1)
         summary["brier"] = round(summary["brier"] / summary["countable"], 4)
 
     for bucket in summary["byBucket"].values():
@@ -507,6 +544,8 @@ def summarize_records(records):
     summary["methodCounts"] = dict(summary["methodCounts"].most_common())
     summary["confidenceReasonCounts"] = dict(summary["confidenceReasonCounts"].most_common())
     summary["recordsWithoutProjection"] = summary["missingProjection"]
+    raw_count = summary["win"] + summary["loss"]
+    summary["rawWinRate"] = round(summary["win"] / raw_count * 100, 1) if raw_count else 0.0
     return summary
 
 
@@ -652,9 +691,14 @@ def build_calibration_artifact(summary, deduped_summary, filter_counts, deploy_c
 
 
 def write_calibration_artifact(path, artifact):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if Path(path).suffix.lower() != ".json":
+        raise ValueError("Report artifacts require a .json path; source JSONL files are protected")
+    sources = artifact.get("metadata", {}).get("sources", [])
+    if Path(path).resolve() in {Path(source["path"]).resolve() for source in sources}:
+        raise ValueError("Report output must not overwrite source history")
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
-        json.dump(artifact, handle, indent=2)
+        json.dump(artifact, handle, indent=2, allow_nan=False)
 
 
 def format_bucket_line(label, bucket):
@@ -679,6 +723,7 @@ def print_summary(
     if note:
         print(note)
     print(f"Selected / graded rows: {summary['gradedCount']}")
+    print(f"Eligible projection results: W {summary['eligibleWins']} | L {summary['eligibleLosses']} | Legacy fantasy excluded: {summary['legacyFantasyExcluded']}")
     print(
         f"Countable plays: {summary['countable']} | "
         f"Win rate: {summary['winRate']}% | Brier: {summary['brier']}"
@@ -799,7 +844,7 @@ def print_summary(
 
 def main():
     args = parse_args()
-    graded = load_jsonl(GRADED_PROPS_FILE)
+    graded, history_metadata = read_report_history(args)
     if not graded:
         print("No graded props found.")
         return
@@ -810,17 +855,13 @@ def main():
         print("No records matched the selected filters.")
         return
 
-    prop_level = summarize_records(selected)
-    stable_records = [
-        record
-        for record in selected
-        if has_projection(record.get("alert") or {})
-        and has_confidence(record.get("alert") or {})
-        and derive_confidence_band(record.get("alert") or {}) == "stable"
-    ]
-    stable_prop_level = summarize_records(stable_records)
-    stable_deduped = summarize_records(dedupe_player_game(stable_records))
-    deduped = summarize_records(dedupe_player_game(selected))
+    summarize = lambda rows: summarize_records(rows, args.include_legacy_fantasy)
+    prop_level = summarize(selected)
+    stable_prop_level = summarize(stable_representatives(selected))
+    representatives = dedupe_player_game(selected)
+    stable_deduped = summarize(stable_representatives(representatives))
+    deduped = summarize(representatives)
+    unique_lines = summarize(dedupe_observations(selected))
 
     window_desc = []
     if args.game_date:
@@ -836,7 +877,8 @@ def main():
 
     print(f"Projection report ({', '.join(window_desc)})")
     print("")
-    print_summary("Prop-level view", prop_level, args, filter_counts, deploy_cutoff)
+    print_summary("Latest-alert view", prop_level, args, filter_counts, deploy_cutoff,
+                  note="Historical box-score labels; platform settlement unverified. Different stats/games can remain correlated.")
     print("")
     print_summary(
         "Calibration fit (stable post-deploy rows only)",
@@ -852,6 +894,7 @@ def main():
         stat_min_count=args.calibration_min_family_count,
     )
     print_summary("Player-game deduped view", deduped, args, filter_counts, deploy_cutoff)
+    print_summary("Unique-line view", unique_lines, args, filter_counts, deploy_cutoff)
 
     artifact = build_calibration_artifact(
         stable_prop_level,
@@ -860,6 +903,12 @@ def main():
         deploy_cutoff,
         args,
     )
+    artifact["metadata"].update(history_metadata)
+    artifact["metadata"].update({"includeLegacyFantasy": args.include_legacy_fantasy,
+        "settlementBasis": "historical/internal box-score evaluations; platform settlement unverified",
+        "legacyGradingAlerts": sum(record.get("gradingVersion") != 2 for record in selected),
+        "probabilitySemantics": "existing estimator; void/push probability redesign pending step 5"})
+    artifact["populationSummaries"] = {"latestAlert": prop_level, "uniqueLine": unique_lines, "playerGameStat": deduped}
     write_calibration_artifact(args.output_artifact, artifact)
     print(f"Calibration artifact written to {args.output_artifact}")
 

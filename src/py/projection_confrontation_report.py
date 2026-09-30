@@ -10,6 +10,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+from prop_history import dedupe_observations
 from collections import Counter, defaultdict
 
 from projection_report import (
@@ -35,6 +37,11 @@ from projection_report import (
     parse_date,
     safe_float,
     select_records,
+    add_history_args,
+    validate_report_args,
+    read_report_history,
+    is_legacy_fantasy,
+    write_calibration_artifact,
 )
 
 
@@ -43,6 +50,8 @@ DEFAULT_CONFRONTATION_MIN_COUNT = DEFAULT_MIN_COUNT
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    add_history_args(parser)
+    parser.add_argument("--output-artifact", type=Path)
     parser.add_argument("--days", type=int, default=7, help="Rolling lookback window based on gradedAt.")
     parser.add_argument("--start-date", type=str, help="Inclusive gradedAt cutoff in YYYY-MM-DD format.")
     parser.add_argument("--game-date", type=str, help="Exact slate date (gameDate) to analyze.")
@@ -62,7 +71,7 @@ def parse_args():
         default=DEFAULT_CONFRONTATION_MIN_COUNT,
         help="Minimum count for family highlighting.",
     )
-    return parser.parse_args()
+    return validate_report_args(parser, parser.parse_args())
 
 
 def empty_confrontation_bucket():
@@ -80,10 +89,10 @@ def empty_confrontation_bucket():
 
 def update_confrontation_bucket(bucket, posted_result, projection_result):
     bucket["count"] += 1
-    if posted_result == "win":
+    if posted_result == "win" and projection_result in ("win", "loss"):
         bucket["postedWins"] += 1
         bucket["postedCountable"] += 1
-    elif posted_result == "loss":
+    elif posted_result == "loss" and projection_result in ("win", "loss"):
         bucket["postedLosses"] += 1
         bucket["postedCountable"] += 1
 
@@ -120,6 +129,11 @@ def make_summary():
         "void": 0,
         "unresolved": 0,
         "countable": 0,
+        "pairedPostedWins": 0,
+        "pairedPostedLosses": 0,
+        "missingFinalValue": 0,
+        "inconsistentOutcome": 0,
+        "legacyFantasyExcluded": 0,
         "recordsWithProjection": 0,
         "recordsWithConfidence": 0,
         "missingProjection": 0,
@@ -148,7 +162,7 @@ def projection_result_for_side(side, final_value, line):
     if side not in ("over", "under"):
         return "tie"
     if final_value is None or line is None:
-        return "tie"
+        return None
     if side == "over":
         if final_value > line:
             return "win"
@@ -162,7 +176,7 @@ def projection_result_for_side(side, final_value, line):
     return "loss"
 
 
-def summarize_records(records):
+def summarize_records(records, include_legacy_fantasy=False):
     summary = make_summary()
 
     for record in records:
@@ -198,14 +212,23 @@ def summarize_records(records):
 
         if result not in ("win", "loss"):
             continue
+        if is_legacy_fantasy(record) and not include_legacy_fantasy:
+            summary["legacyFantasyExcluded"] += 1
+            continue
         if not has_proj or not has_conf:
             continue
 
-        if prob is None or prob < 0 or prob > 1:
+        if prob is None or projection_side is None:
             summary["invalidProbability"] += 1
             continue
 
         if side not in ("over", "under"):
+            continue
+        if final_value is None or line is None:
+            summary["missingFinalValue"] += 1
+            continue
+        if projection_result_for_side(side, final_value, line) != result:
+            summary["inconsistentOutcome"] += 1
             continue
 
         summary["countable"] += 1
@@ -224,6 +247,9 @@ def summarize_records(records):
             summary["projectionPreferredCountable"] += 1
         else:
             summary["projectionPreferredTies"] += 1
+        if projection_result in ("win", "loss"):
+            summary["pairedPostedWins"] += int(result == "win")
+            summary["pairedPostedLosses"] += int(result == "loss")
 
         if projection_side == side:
             agreement = "agree"
@@ -250,6 +276,10 @@ def summarize_records(records):
 
     summary["familyStatusCounts"] = dict(sorted(summary["familyStatusCounts"].items(), key=lambda item: (-item[1], item[0])))
     summary["projectionSideCounts"] = dict(summary["projectionSideCounts"])
+    paired = summary["pairedPostedWins"] + summary["pairedPostedLosses"]
+    summary["postedWinRate"] = round(summary["pairedPostedWins"] / paired * 100, 1) if paired else None
+    summary["projectionWinRate"] = round(summary["projectionPreferredWins"] / paired * 100, 1) if paired else None
+    summary["winRateGap"] = round(summary["projectionWinRate"] - summary["postedWinRate"], 1) if paired else None
     return summary
 
 
@@ -280,10 +310,12 @@ def print_summary(title, summary, filter_counts, deploy_cutoff, min_count=None):
     print(title)
     print(f"Selected / graded rows: {summary['gradedCount']}")
     print(
-        f"Posted side: {summary['win']}-{summary['loss']} | "
+        f"Paired posted side: {summary['pairedPostedWins']}-{summary['pairedPostedLosses']} | "
         f"Projection preferred: {summary['projectionPreferredWins']}-{summary['projectionPreferredLosses']} | "
         f"Ties: {summary['projectionPreferredTies']}"
     )
+    print(f"Raw result mix: W {summary['win']} | L {summary['loss']} | P {summary['push']} | V {summary['void']} | U {summary['unresolved']}")
+    print(f"Excluded: legacy fantasy={summary['legacyFantasyExcluded']}, missing final value={summary['missingFinalValue']}, inconsistent label={summary['inconsistentOutcome']}")
     print(
         f"Coverage: {summary['recordsWithProjection']} with projection | "
         f"{summary['recordsWithConfidence']} with confidence | "
@@ -301,13 +333,11 @@ def print_summary(title, summary, filter_counts, deploy_cutoff, min_count=None):
     print("")
 
     print("Overall confrontation summary:")
-    posted_countable = summary["win"] + summary["loss"]
-    projection_countable = summary["projectionPreferredCountable"]
-    posted_rate = round((summary["win"] / posted_countable) * 100, 1) if posted_countable else 0.0
-    projection_rate = round((summary["projectionPreferredWins"] / projection_countable) * 100, 1) if projection_countable else 0.0
+    posted_rate = summary["postedWinRate"]
+    projection_rate = summary["projectionWinRate"]
     print(f"  Posted side win rate: {posted_rate}%")
     print(f"  Projection-preferred win rate: {projection_rate}%")
-    print(f"  Difference: {round(projection_rate - posted_rate, 1):+.1f}")
+    print(f"  Difference on identical paired rows: {summary['winRateGap']}")
 
     print("")
     print("Agreement split:")
@@ -328,7 +358,7 @@ def print_summary(title, summary, filter_counts, deploy_cutoff, min_count=None):
         print(
             f"  {side}: count {bucket['count']} | posted {bucket['postedWins']}-{bucket['postedLosses']} "
             f"({bucket['postedWinRate']}%) | projection {bucket['projectionWins']}-{bucket['projectionLosses']} "
-            f"({bucket['projectionWinRate']}%) | gap {bucket['winRateGap']:+.1f}"
+            f"({bucket['projectionWinRate']}%) | gap {bucket['winRateGap']}"
         )
 
     print("")
@@ -345,7 +375,7 @@ def print_summary(title, summary, filter_counts, deploy_cutoff, min_count=None):
             print(
                 f"  {name}: count {bucket['count']} | posted {bucket['postedWins']}-{bucket['postedLosses']} "
                 f"({bucket['postedWinRate']}%) | projection {bucket['projectionWins']}-{bucket['projectionLosses']} "
-                f"({bucket['projectionWinRate']}%) | gap {bucket['winRateGap']:+.1f}"
+                f"({bucket['projectionWinRate']}%) | gap {bucket['winRateGap']}"
             )
 
     print("")
@@ -355,7 +385,7 @@ def print_summary(title, summary, filter_counts, deploy_cutoff, min_count=None):
         print(
             f"  {band}: count {bucket['count']} | posted {bucket['postedWins']}-{bucket['postedLosses']} "
             f"({bucket['postedWinRate']}%) | projection {bucket['projectionWins']}-{bucket['projectionLosses']} "
-            f"({bucket['projectionWinRate']}%) | gap {bucket['winRateGap']:+.1f}"
+            f"({bucket['projectionWinRate']}%) | gap {bucket['winRateGap']}"
         )
 
     print("")
@@ -379,7 +409,7 @@ def print_summary(title, summary, filter_counts, deploy_cutoff, min_count=None):
 
 def main():
     args = parse_args()
-    graded = load_jsonl(GRADED_PROPS_FILE)
+    graded, history_metadata = read_report_history(args)
     if not graded:
         print("No graded props found.")
         return
@@ -390,8 +420,9 @@ def main():
         print("No records matched the selected filters.")
         return
 
-    prop_level = summarize_records(selected)
-    deduped = summarize_records(dedupe_player_game(selected))
+    prop_level = summarize_records(selected, args.include_legacy_fantasy)
+    deduped = summarize_records(dedupe_player_game(selected), args.include_legacy_fantasy)
+    unique = summarize_records(dedupe_observations(selected), args.include_legacy_fantasy)
 
     window_desc = []
     if args.game_date:
@@ -410,7 +441,16 @@ def main():
     print_summary("Prop-level confrontation", prop_level, filter_counts, deploy_cutoff, args.min_count)
     print("")
     print_summary("Player-game deduped confrontation", deduped, filter_counts, deploy_cutoff, args.min_count)
+    print_summary("Unique-line confrontation", unique, filter_counts, deploy_cutoff, args.min_count)
     print(f"Calibration artifact reference: {CALIBRATION_ARTIFACT_FILE}")
+    if args.output_artifact:
+        write_calibration_artifact(args.output_artifact, {"metadata": {**history_metadata,
+            "includeLegacyFantasy": args.include_legacy_fantasy, "days": args.days,
+            "startDate": args.start_date, "gameDate": args.game_date,
+            "postDeployCutoff": deploy_cutoff.isoformat() if deploy_cutoff else None,
+            "legacyGradingAlerts": sum(row.get("gradingVersion") != 2 for row in selected)},
+            "filters": dict(filter_counts), "latestAlert": prop_level,
+            "uniqueLine": unique, "playerGameStat": deduped})
 
 
 if __name__ == "__main__":

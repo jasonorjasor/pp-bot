@@ -7,6 +7,11 @@ const BASE_DIR = path.resolve(__dirname, '..', '..');
 const PYTHON_DIR = path.join(BASE_DIR, 'src', 'py');
 const REPORTS_DIR = path.join(BASE_DIR, 'reports');
 const SUMMARY_FILE = path.join(REPORTS_DIR, 'gradingSummary.json');
+const graderArgs = process.argv.slice(2);
+const outputIndex = graderArgs.indexOf('--output-dir');
+const outputDir = outputIndex >= 0 ? graderArgs[outputIndex + 1] :
+  (graderArgs.includes('--dry-run') ? path.join(REPORTS_DIR, 'gradingDryRun') : null);
+const summaryFile = outputDir ? path.resolve(outputDir, 'gradingSummary.json') : SUMMARY_FILE;
 
 function resolvePythonBinary() {
   const configured = String(process.env.PYTHON_BIN || '').trim();
@@ -45,7 +50,7 @@ function runPythonGrader() {
 
     console.error(`[grading] Using python binary: ${pythonBinary}`);
 
-    const py = spawn(pythonBinary, [path.join(PYTHON_DIR, 'grade_props.py')], {
+    const py = spawn(pythonBinary, [path.join(PYTHON_DIR, 'grade_props.py'), ...graderArgs], {
       cwd: BASE_DIR,
       stdio: 'inherit',
     });
@@ -65,16 +70,17 @@ function runPythonGrader() {
 }
 
 function loadSummaryFromDisk() {
-  if (!fs.existsSync(SUMMARY_FILE)) {
+  if (!fs.existsSync(summaryFile)) {
     return null;
   }
 
-  const raw = fs.readFileSync(SUMMARY_FILE, 'utf8');
+  const raw = fs.readFileSync(summaryFile, 'utf8');
   return JSON.parse(raw);
 }
 
 async function main() {
   const graderOutput = await runPythonGrader();
+  if (graderArgs.includes('--help') || graderArgs.includes('-h')) return;
   if (!graderOutput.success) {
     throw new Error(graderOutput.error || 'Unknown grading failure');
   }
@@ -89,7 +95,7 @@ async function main() {
       `newly_graded=${batch.newlyGraded || 0}`,
       `pending_checked=${batch.pendingChecked || 0}`,
       `unique_lines=${overall.gradedCount || 0}`,
-      'Run `npm run recap` to post the Discord recap.',
+      outputDir ? `Separate evaluation artifacts: ${outputDir}` : 'Run `npm run recap` to post the Discord recap.',
     ].join(' ')
   );
 }

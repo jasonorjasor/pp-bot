@@ -12,6 +12,7 @@ Discord bot for tracking PrizePicks NBA props, scoring both sides with Python an
 - Grades settled props into `data/active/gradedProps.jsonl` using official NBA player game logs.
 - Supports regular season, play-in, and playoff grading.
 - Writes recap summaries, archives old data, and provides projection analysis reports.
+- Offers an optional SQLite analytics import for querying posted props and grading history without changing the bot's JSONL workflow.
 
 ## Requirements
 
@@ -86,6 +87,8 @@ Main active files:
 - `npm run grade`
   - Grades pending props only.
   - Updates `data/active/gradedProps.jsonl` and `reports/gradingSummary.json`.
+  - Uses a supplied NBA game ID, or the exact scheduled league date plus expected opponent. Timezone defaults to `America/New_York`; there is no nearby-game fallback. Ambiguous/missing evidence stays unresolved.
+  - Records `gradingVersion: 2`, matching provenance, and `platformSettlementVerified: false`. Results compare NBA box scores with the posted line. They do not certify PrizePicks settlement, injury reboots, or payouts. Positive participation is evaluated even below five minutes; zero/missing participation stays unresolved.
 
 - `npm run recap`
   - Posts the latest recap from `reports/gradingSummary.json`.
@@ -116,7 +119,48 @@ Examples:
 ```bash
 npm run projection:report -- --days 30 --post-deploy-only
 npm run projection:confrontation -- --days 30 --post-deploy-only
+npm run projection:report -- --all-history --include-predeploy --output-artifact reports/projectionFull.json
+npm run projection:confrontation -- --all-history --include-predeploy --output-artifact reports/confrontationFull.json
 ```
+
+Both reports read `archive/graded/*.jsonl` plus active grades by default, select the latest outcome per alert before applying time filters, and accept `--active-only`, `--grades PATH`, and `--archive-root PATH`. Custom grade paths use only that file unless an archive root is supplied. `--all-history` disables the rolling age cutoff; `--include-predeploy` also retains early records without projection fields.
+
+Latest-alert, unique-line, and player-game/stat populations are reported separately. Unique lines include player, stat, event, side, and line. Player-game/stat observations choose the earliest posted alert before testing projection eligibility, so a later line/side is not selected because its result or coverage is preferable. Missing event identity is isolated by alert ID. These observations can still be correlated.
+
+Projection win rates use eligible wins divided by eligible wins plus losses; raw results and coverage are separate. Confrontation rates compare identical complete pairs and exclude probability ties. Both predictions and labels require fantasy formula version 2 for default calibration; `--include-legacy-fantasy` is an explicit research override. Historical game matching has not been comprehensively reconciled, and probability treatment of voids/pushes awaits step 5. All projection families remain `watch_only`.
+
+### Review historical grading safely
+
+```bash
+npm run grade -- --all-history --regrade --dry-run --output-dir reports/gradingReview
+```
+
+This can fetch NBA game logs for the entire posted history. It writes separate `proposedGrades.jsonl`, `acceptedGrades.jsonl`, `gradingComparison.json`, and `gradingSummary.json`, without appending to source history or replacing the live summary. `--regrade` requires dry-run or separate output; custom source files also require separate output. Proposed settled-to-unresolved changes are marked `needs_review` and excluded from accepted output. Accepted output remains a proposal for later historical reconciliation, not an automatic source rewrite. Ordinary grading includes archived outcomes in its overall summary but processes only active pending posts.
+
+For deterministic offline review, add `--game-logs PATH`. The JSON shape is `{"players":{"Player Name|2025-26":{"playerId":123,"games":[{"GAME_ID":"0022500001","GAME_DATE":"2026-03-11","MATCHUP":"LAL vs. DAL","MIN":30,"PTS":25}]}}}`. Supply all stat columns needed for each prop (including `TOV` for fantasy). Missing cached player/season entries stay unresolved and never trigger live fetches. Use `--posted PATH --grades PATH` for isolated fixtures.
+
+### Optional SQL analytics
+
+The bot continues to treat JSONL files as the source of truth. To create or refresh a local SQLite analytics copy and print import metadata and integrity counts, run:
+
+```bash
+npm run analytics:sql
+```
+
+This creates `data/active/props_analytics.sqlite3` (ignored local data), importing active posts/grades plus `archive/posted/*.jsonl` and `archive/graded/*.jsonl`. `--active-only` opts out of archives; `--archive-root PATH` sets an explicit root. Custom post/grade paths default to isolated sources. Required files and explicitly supplied archive roots must exist. Empty files are valid; missing files are errors.
+
+Imports validate required identities, aware timestamps, enums, finite numbers/probabilities, and nested alert IDs. UTF-8 BOMs are accepted. Legacy alerts without IDs use the original `propId|postedAt|line|recommendedSide` formula. A failure anywhere in the requested source set rolls back the import. `import_runs` logs scanned/inserted/updated/duplicate counts and source SHA-256 hashes. Identical reimports do not duplicate posts/events.
+
+Schema version 2 (`PRAGMA user_version`) retains full raw JSON and normalizes `gradedAt` to UTC microseconds. `latest_grades` selects by timestamp, then canonical event hash for exact-time ties; insertion order cannot regress results. `latest_alert_results`, `unique_line_results`, and `player_game_stat_results` expose the corresponding observation populations. Equal-time conflicting results are flagged in health output; their deterministic tie-breaker does not establish authority. `sql/performance_summary.sql` provides descriptive counts.
+
+Older databases migrate transactionally on open. Fields omitted by the original schema cannot be reconstructed faithfully; migrated events report `eventsWithoutRawSnapshot` until source reimport restores them. Unknown future versions are refused. Incremental imports retain rows even if later removed from JSONL. Use an explicit rebuild for an exact copy of selected sources:
+
+```bash
+npm run analytics:sql -- --rebuild
+npm run analytics:sql -- --posted fixtures/posted.jsonl --grades fixtures/graded.jsonl --database reports/fixture.sqlite3 --rebuild
+```
+
+Rebuild imports and checks a temporary database beside the destination, then replaces the destination atomically. Failure preserves the previous database. Close external database readers before rebuilding on Windows. SQL remains an optional analytics copy; its historical labels are not certified settlement or profitability estimates.
 
 ### Checks and tests
 
@@ -138,8 +182,17 @@ npm run projection:confrontation -- --days 30 --post-deploy-only
 - `npm run smoke:context`
   - Python compile check for context and scoring scripts.
 
+- `npm run smoke:sql`
+  - Python compile check for the optional SQL analytics importer.
+
 - `npm run test:projection`
   - Runs the projection-focused Python unit tests.
+
+- `npm run test:sql`
+  - Tests imports, chronology, archive rollback, validation, schema migration, and safe rebuilding.
+
+- `npm run test:grading`
+  - Tests event identity, participation, report populations, and the Node-to-Python offline grading CLI.
 
 - `npm test`
   - Runs the full local check suite.
@@ -170,8 +223,10 @@ npm run projection:confrontation -- --days 30 --post-deploy-only
 
 ### Grading
 
-- `GRADE_VOID_MINUTES_THRESHOLD`
-  - Default: `5`
+- `GRADE_GAME_DATE_TIMEZONE`
+  - Default: `America/New_York`; converts aware start times to the NBA schedule date.
+  - Requires timezone data (`tzdata` on Windows if the Python environment lacks it).
+- `GRADE_VOID_MINUTES_THRESHOLD` is retired and ignored; minutes alone do not establish platform settlement.
 - `GRADE_SETTLEMENT_DELAY_HOURS`
   - Default: `4`
 - `GRADE_LOOKBACK_DAYS`
@@ -272,5 +327,13 @@ Projection fields are logged and reported, but they do not currently control liv
 - Grading now supports regular season, play-in, and playoff game logs.
 - Recaps report both raw alert-level results and deduped unique-line results.
 - Archive scripts keep old settled data out of the active JSONL files.
+
+### Fantasy scoring repair
+
+Fantasy Score and Fantasy Points use `PTS + 1.2*REB + 1.5*AST + 3*STL + 3*BLK - TOV`, following the [PrizePicks NBA scoring chart](https://www.prizepicks.com/playbook-article/how-to-play-prizepicks-nba-fantasy-scoring-system). New fantasy analytics and calculated grades carry `fantasyScoringVersion: 2`.
+
+Older saved fantasy records omitted turnovers and have not been rewritten. Existing team caches without version 2 are excluded from fantasy opponent-allowance adjustments until `npm run context:refresh` rebuilds them; other context inputs remain available. Review historical fantasy results before using them for calibration.
+
+`npm run test:scoring` runs the fantasy scoring regression tests and is included in `npm test`. See [FIX_PLAN.md](FIX_PLAN.md) for the staged repair plan.
 
 

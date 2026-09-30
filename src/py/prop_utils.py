@@ -10,6 +10,8 @@ from nba_api.stats.static import players
 from nba_api.stats.endpoints import playergamelog
 
 CURRENT_SEASON = "2025-26"
+# Version 1 omitted turnovers; version 2 follows the PrizePicks NBA scoring chart.
+FANTASY_SCORING_VERSION = 2
 DEFAULT_GAME_LOG_SEASON_TYPES = (
     "Regular Season",
     "PlayIn",
@@ -51,8 +53,8 @@ STAT_MAP = {
     "Two Pointers Attempted": {"type": "derived", "formula": "2PA"},
     "2-Pointers Attempted": {"type": "derived", "formula": "2PA"},
     "2 Pointers Attempted": {"type": "derived", "formula": "2PA"},
-    "Fantasy Score": {"type": "fantasy", "keys": ["PTS", "REB", "AST", "STL", "BLK"]},
-    "Fantasy Points": {"type": "fantasy", "keys": ["PTS", "REB", "AST", "STL", "BLK"]},
+    "Fantasy Score": {"type": "fantasy", "keys": ["PTS", "REB", "AST", "STL", "BLK", "TOV"]},
+    "Fantasy Points": {"type": "fantasy", "keys": ["PTS", "REB", "AST", "STL", "BLK", "TOV"]},
     "Pts+Rebs": {"type": "simple", "keys": ["PTS", "REB"]},
     "Pts+Asts": {"type": "simple", "keys": ["PTS", "AST"]},
     "Rebs+Asts": {"type": "simple", "keys": ["REB", "AST"]},
@@ -71,6 +73,7 @@ FANTASY_WEIGHTS = {
     "AST": 1.5,
     "STL": 3.0,
     "BLK": 3.0,
+    "TOV": -1.0,
 }
 
 

@@ -13,7 +13,7 @@ import json
 import os
 
 import numpy as np
-from prop_utils import CURRENT_SEASON, STAT_MAP, compute_game_total, find_player, get_game_log
+from prop_utils import CURRENT_SEASON, FANTASY_SCORING_VERSION, STAT_MAP, compute_game_total, find_player, get_game_log
 from team_context import (
     TEAM_CONTEXT_FILE,
     build_clean_game_metrics,
@@ -650,6 +650,7 @@ def compute_analytics(df, stat_type, line, game_hint=None, start_time=None):
 
     return {
         "sampleSize": sample_size,
+        **({"fantasyScoringVersion": FANTASY_SCORING_VERSION} if stat_config["type"] == "fantasy" else {}),
         "flaggedGames": flagged_count,
         "minutesBaseline": baseline_minutes,
         "minutesRegimeCounts": minutes_regime_counts,

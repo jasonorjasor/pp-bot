@@ -806,6 +806,7 @@ function buildPostedAlertRecord({ propId, playerName, attr, lineChangeText, deci
     game: attr.description || null,
     startTime: attr.start_time || null,
     analytics: {
+      fantasyScoringVersion: analytics.fantasyScoringVersion,
       sampleSize: analytics.sampleSize,
       hitSampleSize: analytics.hitSampleSize,
       mean: analytics.mean,

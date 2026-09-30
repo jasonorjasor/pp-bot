@@ -144,7 +144,7 @@ function buildRecapEmbed(summary) {
 
   const embed = new EmbedBuilder()
     .setColor(0x4caf50)
-    .setTitle('Daily Prop Grading Recap')
+    .setTitle('Daily NBA Box-Score Recap')
     .setDescription(`Slate date: **${slateLabel}**`)
     .addFields(
       {
@@ -183,6 +183,7 @@ function buildRecapEmbed(summary) {
         inline: false,
       },
     )
+    .setFooter({ text: 'Box-score evaluation; PrizePicks settlement and reboots are unverified. Historical labels may use earlier grading rules.' })
     .setTimestamp();
 
   if (topStatType || topScoreBand) {

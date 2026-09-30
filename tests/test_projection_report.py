@@ -30,13 +30,16 @@ class ProjectionReportTests(unittest.TestCase):
         self.assertEqual(get_probability_for_side(analytics, "over"), 0.0)
         self.assertEqual(choose_probability(alert), 0.0)
 
-    def test_dedupe_prefers_prop_id(self):
+    def test_player_game_dedupe_uses_event_and_earliest_post(self):
         records = [
             {
+                "alertId": "earlier",
                 "gradedAt": "2026-04-01T10:00:00Z",
                 "result": "win",
                 "alert": {
                     "propId": "123",
+                    "postedAt": "2026-04-01T08:00:00Z",
+                    "line": 20.5,
                     "playerName": "Test Player",
                     "statType": "Points",
                     "recommendedSide": "over",
@@ -44,10 +47,13 @@ class ProjectionReportTests(unittest.TestCase):
                 },
             },
             {
+                "alertId": "later",
                 "gradedAt": "2026-04-01T11:00:00Z",
                 "result": "loss",
                 "alert": {
                     "propId": "123",
+                    "postedAt": "2026-04-01T09:00:00Z",
+                    "line": 21.5,
                     "playerName": "Test Player",
                     "statType": "Points",
                     "recommendedSide": "under",
@@ -56,6 +62,7 @@ class ProjectionReportTests(unittest.TestCase):
             },
         ]
         self.assertEqual(len(dedupe_player_game(records)), 1)
+        self.assertEqual(dedupe_player_game(records)[0]["alertId"], "earlier")
 
     def test_calibration_gates_skip_thin_tables(self):
         summary = make_summary()

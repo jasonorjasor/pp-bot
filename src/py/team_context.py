@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 from nba_api.stats.endpoints import leaguegamelog
 
-from prop_utils import CURRENT_SEASON
+from prop_utils import CURRENT_SEASON, FANTASY_SCORING_VERSION, STAT_MAP, compute_game_total
 from playtype_context import compute_playtype_bias
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -204,11 +204,9 @@ def compute_allowance_metrics(team_df):
         opponent_two_pa = float(row["OPP_FGA"]) - float(row["OPP_FG3A"])
         opponent_three_pm = float(row["OPP_FG3M"])
         opponent_three_pa = float(row["OPP_FG3A"])
-        opponent_fantasy = (
-            opponent_points
-            + (opponent_rebounds * 1.2)
-            + (opponent_assists * 1.5)
-            + ((float(row["OPP_STL"]) + float(row["OPP_BLK"])) * 3.0)
+        opponent_fantasy = compute_game_total(
+            {key: row[f"OPP_{key}"] for key in STAT_MAP["Fantasy Score"]["keys"]},
+            STAT_MAP["Fantasy Score"],
         )
 
         metrics["points"].append(_per100(opponent_points, opp_poss))
@@ -360,6 +358,7 @@ def build_team_context_cache(season=CURRENT_SEASON):
         "generatedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "season": season,
         "source": SOURCE_LABEL,
+        "fantasyScoringVersion": FANTASY_SCORING_VERSION,
         "teams": teams,
         "league": {
             "pace": {
@@ -503,8 +502,15 @@ def compute_opponent_bias(
     opponent_team=None,
     team_name_map=None,
     enabled=True,
+    fantasy_scoring_version=None,
 ):
     allowance_key = get_allowance_key(stat_type)
+    if allowance_key == "fantasy" and fantasy_scoring_version != FANTASY_SCORING_VERSION:
+        return 0.0, {
+            "baselineBias": 0.0,
+            "fallbackUsed": True,
+            "fallbackReason": "legacy_fantasy_scoring",
+        }
     baseline_bias = 0.0
     baseline_inputs = {}
 
@@ -752,6 +758,7 @@ def compute_context_for_prop(
         opponent_team=opponent_team,
         team_name_map=team_name_map,
         enabled=enable_opponent,
+        fantasy_scoring_version=cache.get("fantasyScoringVersion"),
     )
     rest_bias, rest_inputs = compute_rest_bias(
         stat_type,
